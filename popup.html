@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <title>Tab Auto Refresher</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif; width: 380px; padding: 10px; font-size: 14px; color: #333; position: relative; } /* Added position: relative */
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif; width: 380px; padding: 10px; font-size: 14px; color: #333; position: relative; } 
     h3, h4 { margin-top: 12px; margin-bottom: 8px; color: #111; }
     label { display: inline-block; margin-top: 5px; margin-right: 3px; font-size: 0.9em; }
     input[type="number"] { width: 55px; margin-left: 2px; padding: 4px; border: 1px solid #ccc; border-radius: 3px; font-size: 0.9em;}
@@ -24,13 +24,14 @@
     #taskList .task-item:last-child { border-bottom: none; }
     .task-info { flex-grow: 1; margin-right: 10px; }
     .task-title { font-weight: 600; display: block; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px;}
+    .task-url { font-size: 0.8em; color: #666; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; margin-bottom: 2px;}
     .task-details { font-size: 0.85em; color: #444; }
     .task-countdown { font-weight: bold; }
-    .delete-task-button { /* Renamed from stop-task-button */
+    .delete-task-button { 
         padding: 5px 9px; 
         background-color: #dc3545; 
         font-size: 0.85em; 
-        min-width: 60px; /* Ensure enough space for "Delete" / "删除" */
+        min-width: 60px; 
         text-align: center;
     } 
     .delete-task-button:hover { background-color: #c82333; }
@@ -54,6 +55,11 @@
         cursor: pointer;
     }
     #languageToggle:hover { background-color: #5a6268; }
+
+    #settingsSection { margin-top: 15px; padding-top:10px; border-top: 1px solid #eee;}
+    #settingsSection label { margin-right: 8px; }
+    #settingsSection input[type="radio"] { margin-right: 3px; vertical-align: middle;}
+    #settingsSection .setting-label { font-weight: normal; font-size: 0.9em; vertical-align: middle;}
   </style>
 </head>
 <body>
@@ -83,6 +89,18 @@
   <div id="taskList">
     <p id="noTasksMessage" data-lang-key="noTasks">No active refresh tasks.</p>
     <!-- Task items will be dynamically added here -->
+  </div>
+
+  <div id="settingsSection">
+    <h4 data-lang-key="settingsHeader">Settings</h4>
+    <div>
+        <strong data-lang-key="onTabCloseLabel">When a monitored tab is closed:</strong><br>
+        <input type="radio" id="reopenDelete" name="tabCloseAction" value="delete" checked>
+        <label for="reopenDelete" class="setting-label" data-lang-key="deleteTaskOption">Delete refresh task</label>
+        <br>
+        <input type="radio" id="reopenReopen" name="tabCloseAction" value="reopen">
+        <label for="reopenReopen" class="setting-label" data-lang-key="reopenTabOption">Reopen tab & continue refresh</label>
+    </div>
   </div>
 
   <script src="popup.js"></script>

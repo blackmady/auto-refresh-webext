@@ -10,12 +10,12 @@ document.addEventListener('DOMContentLoaded', async () => {
           enableRefresh: "Enable Refresh for This Tab",
           disableRefresh: "Disable Refresh for This Tab",
           statusIdle: "Status: Idle for this tab.",
-          statusRefreshing: "Status: Refreshing. Next: {0} (every {1}-{2}s)", // {0} = timeLeft, {1} = min, {2} = max
+          statusRefreshing: "Status: Refreshing. Next: {0} (every {1}-{2}s)", 
           statusRescheduling: " (Rescheduling...)",
           activeTasksHeader: "Active Refresh Tasks",
           noTasks: "No active refresh tasks.",
           nextInLabel: "Next in: ",
-          everyLabel: " (every {0}-{1}s)", // {0} = min, {1} = max
+          everyLabel: " (every {0}-{1}s)", 
           deleteButton: "Delete",
           refreshingStatus: "Refreshing...",
           dueRefreshingStatus: "Due / Refreshing...",
@@ -23,7 +23,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           statusErrorTabInfo: "Status: Could not get current tab info.",
           statusErrorAction: "Error: Could not identify current tab for action.",
           statusErrorNoTabAction: "Error: No active tab found for action.",
-          statusErrorInvalidInterval: "Status: Invalid min/max values (min <= max, both > 0)."
+          statusErrorInvalidInterval: "Status: Invalid min/max values (min <= max, both > 0).",
+          settingsHeader: "Settings",
+          onTabCloseLabel: "When a monitored tab is closed:",
+          deleteTaskOption: "Delete refresh task",
+          reopenTabOption: "Reopen tab & continue refresh"
       },
       zh: {
           title: "标签页自动刷新器",
@@ -47,7 +51,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           statusErrorTabInfo: "状态: 无法获取当前标签页信息。",
           statusErrorAction: "错误: 无法识别当前标签页以执行操作。",
           statusErrorNoTabAction: "错误: 未找到活动标签页以执行操作。",
-          statusErrorInvalidInterval: "状态: 无效的最小/最大值 (最小 <= 最大, 均 > 0)。"
+          statusErrorInvalidInterval: "状态: 无效的最小/最大值 (最小 <= 最大, 均 > 0)。",
+          settingsHeader: "设置",
+          onTabCloseLabel: "当受监控的标签页关闭时:",
+          deleteTaskOption: "删除刷新任务",
+          reopenTabOption: "重新打开标签页并继续刷新"
       }
   };
 
@@ -73,9 +81,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       const toggleBtn = document.getElementById('toggleRefreshButton');
       if (toggleBtn) {
           if (toggleBtn.classList.contains('enabled')) {
-              toggleBtn.textContent = getText(toggleBtn.dataset.langKeyDisable);
+              toggleBtn.textContent = getText(toggleBtn.dataset.langKeyDisable || 'disableRefresh');
           } else {
-              toggleBtn.textContent = getText(toggleBtn.dataset.langKeyEnable);
+              toggleBtn.textContent = getText(toggleBtn.dataset.langKeyEnable || 'enableRefresh');
           }
       }
       document.querySelectorAll('.delete-task-button').forEach(btn => {
@@ -94,6 +102,32 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
   }
   
+  // --- Reopen Setting Elements ---
+  const reopenDeleteRadio = document.getElementById('reopenDelete');
+  const reopenReopenRadio = document.getElementById('reopenReopen');
+
+  async function loadAndApplyReopenSetting() {
+      const response = await chrome.runtime.sendMessage({ type: "GET_REOPEN_SETTING" });
+      if (response && typeof response.reopenSetting === 'boolean') {
+          if (response.reopenSetting) {
+              reopenReopenRadio.checked = true;
+          } else {
+              reopenDeleteRadio.checked = true;
+          }
+      }
+  }
+
+  function handleReopenSettingChange() {
+      const shouldReopen = reopenReopenRadio.checked;
+      chrome.runtime.sendMessage({ type: "UPDATE_REOPEN_SETTING", reopen: shouldReopen });
+  }
+
+  if (reopenDeleteRadio && reopenReopenRadio) {
+      reopenDeleteRadio.addEventListener('change', handleReopenSettingChange);
+      reopenReopenRadio.addEventListener('change', handleReopenSettingChange);
+  }
+  // --- End Reopen Setting ---
+
   // --- End Language & i18n Setup ---
 
   const minInput = document.getElementById('minInterval');
@@ -103,7 +137,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const currentTabIdDisplay = document.getElementById('currentTabIdDisplay');
   const currentTabTitleDisplay = document.getElementById('currentTabTitle');
   const taskListDiv = document.getElementById('taskList');
-  const noTasksMessage = document.getElementById('noTasksMessage'); // Get the persistent <p> element
+  const noTasksMessage = document.getElementById('noTasksMessage'); 
   const activeTaskCountSpan = document.getElementById('activeTaskCount');
 
   let countdownIntervals = {}; 
@@ -125,28 +159,23 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   async function updateTaskList(forceTextUpdate = false) {
     clearAllCountdowns();
-
-    // 1. Remove only actual task items, not the 'noTasksMessage' paragraph.
     const itemsToRemove = [];
     for (const child of taskListDiv.children) {
-        // Check if the child is a task item (e.g., by class or !id)
         if (child.id !== 'noTasksMessage' && child.classList.contains('task-item')) {
             itemsToRemove.push(child);
         }
     }
     itemsToRemove.forEach(item => taskListDiv.removeChild(item));
 
-    // 2. Fetch tasks
     const response = await chrome.runtime.sendMessage({ type: "GET_ALL_REFRESHERS" });
     const tasks = response.tasks || [];
     activeTaskCountSpan.textContent = tasks.length;
 
-    // 3. Update UI based on tasks
     if (tasks.length > 0) {
-      noTasksMessage.style.display = 'none'; // Hide the persistent message
+      noTasksMessage.style.display = 'none'; 
       tasks.forEach(task => {
         const item = document.createElement('div');
-        item.className = 'task-item'; // Add class for easy identification
+        item.className = 'task-item'; 
         item.dataset.tabId = task.tabId;
 
         const taskInfo = document.createElement('div');
@@ -156,10 +185,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         titleSpan.className = 'task-title';
         titleSpan.textContent = task.title || `Tab ID: ${task.tabId}`;
         titleSpan.title = task.title || `Tab ID: ${task.tabId}`;
+        taskInfo.appendChild(titleSpan);
+
+        // Display URL
+        if (task.url) {
+          const urlSpan = document.createElement('span');
+          urlSpan.className = 'task-url';
+          urlSpan.textContent = task.url;
+          urlSpan.title = task.url; // Show full URL on hover
+          taskInfo.appendChild(urlSpan);
+        }
 
         const detailsSpan = document.createElement('span');
         detailsSpan.className = 'task-details';
-        
         const countdownSpan = document.createElement('span');
         countdownSpan.className = 'task-countdown';
         
@@ -175,9 +213,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             noteSpan.textContent = `(${getText('statusRescheduling').trim()})`; 
             detailsSpan.appendChild(noteSpan);
         }
-
-        taskInfo.appendChild(titleSpan);
         taskInfo.appendChild(detailsSpan);
+
 
         const deleteTaskButton = document.createElement('button');
         deleteTaskButton.className = 'delete-task-button';
@@ -185,15 +222,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         deleteTaskButton.addEventListener('click', async (e) => {
           e.stopPropagation();
           await chrome.runtime.sendMessage({ type: "STOP_REFRESH", tabId: task.tabId });
-          // The applyTranslations call will eventually call updateTaskList and updateCurrentTabControls
-          // For immediate visual feedback before language potentially changes, call directly:
           await updateTaskList(); 
           await updateCurrentTabControls();
         });
 
         item.appendChild(taskInfo);
         item.appendChild(deleteTaskButton);
-        taskListDiv.appendChild(item); // Append new task item
+        taskListDiv.appendChild(item); 
 
         let remainingTime = task.timeLeft;
         countdownSpan.textContent = formatTime(remainingTime);
@@ -217,11 +252,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       });
     } else {
-      // No tasks
       if (forceTextUpdate || noTasksMessage.textContent !== getText('noTasks')) {
-           noTasksMessage.textContent = getText('noTasks'); // Ensure text is correct for current language
+           noTasksMessage.textContent = getText('noTasks'); 
       }
-      noTasksMessage.style.display = 'block'; // Show the persistent message
+      noTasksMessage.style.display = 'block'; 
     }
   }
 
@@ -340,7 +374,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         tabId: tabToOperateOn.id,
         minInterval: min,
         maxInterval: max,
-        tabTitle: tabToOperateOn.title || "Untitled Tab"
+        tabTitle: tabToOperateOn.title || "Untitled Tab",
+        tabUrl: tabToOperateOn.url // Pass current tab's URL
       });
     }
     await updateCurrentTabControls(); 
@@ -348,16 +383,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // --- Initialization ---
-  chrome.storage.local.get('preferredLang', (result) => {
+  chrome.storage.local.get('preferredLang', async (result) => { // made async
       if (result.preferredLang) {
           currentLang = result.preferredLang;
       }
-      // Apply translations first, which also calls update functions with forceTextUpdate = true
+      await loadAndApplyReopenSetting(); // Load reopen setting
       applyTranslations(); 
-      
-      // Initial data load without forcing text update (applyTranslations already did that)
-      // updateCurrentTabControls(); 
-      // updateTaskList();
-      // The calls within applyTranslations should be sufficient.
   });
 });
