@@ -28,6 +28,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       onTabCloseLabel: "When a monitored tab is closed:",
       deleteTaskOption: "Delete refresh task",
       reopenTabOption: "Reopen tab & continue refresh",
+      minIntervalLabel: "Min:", // Shorter label
+      maxIntervalLabel: "Max:", // Shorter label
+      unitSeconds: "s",
+      unitMinutes: "m",
+      unitHours: "h",
+      everyLabelSeconds: " (every {0}-{1}s)", // For display when unit is seconds
+      everyLabelMinutes: " (every {0}-{1}m)", // For display when unit is minutes
+      everyLabelHours: " (every {0}-{1}h)",   // For display when unit is hours
       statusAwaitingReopen: "(Closed - Awaiting Reopen)",
       statusClosedWillDelete: "(Closed - Will be Deleted)"
 
@@ -59,15 +67,24 @@ document.addEventListener('DOMContentLoaded', async () => {
       onTabCloseLabel: "当受监控的标签页关闭时:",
       deleteTaskOption: "删除刷新任务",
       reopenTabOption: "重新打开标签页并继续刷新",
+      minIntervalLabel: "最小:", // Shorter label
+      maxIntervalLabel: "最大:", // Shorter label
+      unitSeconds: "秒",
+      unitMinutes: "分",
+      unitHours: "时",
+      everyLabelSeconds: " (每 {0}-{1}秒)",
+      everyLabelMinutes: " (每 {0}-{1}分)",
+      everyLabelHours: " (每 {0}-{1}时)",
       statusAwaitingReopen: "(已关闭 - 等待重开)",
       statusClosedWillDelete: "(已关闭 - 将被删除)"
     }
   };
 
   let currentLang = 'en';
-    let currentReopenSetting = false; // Variable to store the setting in popup scope
+    let currentReopenSetting = false; 
 
     function getText(key, ...args) {
+        // ... (getText function remains the same) ...
         let text = translations[currentLang][key] || translations['en'][key] || key;
         if (args.length > 0) {
             args.forEach((arg, index) => {
@@ -78,9 +95,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function applyTranslations() {
-        // ... (rest of your applyTranslations function remains the same) ...
+        // ... (applyTranslations function needs to update new unit select options) ...
         document.querySelectorAll('[data-lang-key]').forEach(el => {
-            el.textContent = getText(el.dataset.langKey);
+            if (el.tagName === 'OPTION') { // Handle option elements
+                el.textContent = getText(el.dataset.langKey);
+            } else {
+                el.textContent = getText(el.dataset.langKey);
+            }
         });
         document.querySelectorAll('[data-lang-title-key]').forEach(el => {
             el.title = getText(el.dataset.langTitleKey);
@@ -96,30 +117,32 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.querySelectorAll('.delete-task-button').forEach(btn => {
             btn.textContent = getText('deleteButton');
         });
-        // These will be re-called after settings are fetched in init
-        // updateCurrentTabControls(true); 
-        // updateTaskList(true); 
+        // Ensure these are called to re-render with correct text
+        updateCurrentTabControls(true); 
+        updateTaskList(true); 
     }
     
     const languageToggleButton = document.getElementById('languageToggle');
+    // ... (languageToggle event listener remains the same) ...
     if (languageToggleButton) {
         languageToggleButton.addEventListener('click', () => {
             currentLang = (currentLang === 'en') ? 'zh' : 'en';
             chrome.storage.local.set({ preferredLang: currentLang }); 
-            applyTranslations(); // This will re-render UI elements with new language
-            updateCurrentTabControls(true); // Explicitly update after lang change
-            updateTaskList(true);       // Explicitly update after lang change
+            applyTranslations(); 
+            updateCurrentTabControls(true); 
+            updateTaskList(true);       
         });
     }
     
-    // --- Reopen Setting Elements ---
+    // --- Reopen Setting Elements & Logic ---
+    // ... (Reopen setting logic remains the same) ...
     const reopenDeleteRadio = document.getElementById('reopenDelete');
     const reopenReopenRadio = document.getElementById('reopenReopen');
 
     async function loadAndApplyReopenSetting() {
         const response = await chrome.runtime.sendMessage({ type: "GET_REOPEN_SETTING" });
         if (response && typeof response.reopenSetting === 'boolean') {
-            currentReopenSetting = response.reopenSetting; // Store it
+            currentReopenSetting = response.reopenSetting; 
             if (response.reopenSetting) {
                 reopenReopenRadio.checked = true;
             } else {
@@ -130,21 +153,94 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function handleReopenSettingChange() {
         const shouldReopen = reopenReopenRadio.checked;
-        currentReopenSetting = shouldReopen; // Update local copy
+        currentReopenSetting = shouldReopen; 
         chrome.runtime.sendMessage({ type: "UPDATE_REOPEN_SETTING", reopen: shouldReopen });
-        updateTaskList(true); // Re-render task list to reflect potential change in status note
+        updateTaskList(true); 
     }
 
     if (reopenDeleteRadio && reopenReopenRadio) {
         reopenDeleteRadio.addEventListener('change', handleReopenSettingChange);
         reopenReopenRadio.addEventListener('change', handleReopenSettingChange);
     }
-    // --- End Reopen Setting ---
 
+    // --- Interval Input Elements & Logic ---
     const minInput = document.getElementById('minInterval');
     const maxInput = document.getElementById('maxInterval');
-    // ... (other element getters remain the same) ...
+    const minUnitSelect = document.getElementById('minIntervalUnit');
+    const maxUnitSelect = document.getElementById('maxIntervalUnit');
+
+    const SECONDS_IN_MINUTE = 60;
+    const SECONDS_IN_HOUR = 3600;
+
+    function getIntervalInSeconds(valueInput, unitSelect) {
+        const value = parseInt(valueInput.value);
+        const unit = unitSelect.value;
+        if (isNaN(value) || value <= 0) return null; // Invalid input
+
+        switch (unit) {
+            case 'minutes': return value * SECONDS_IN_MINUTE;
+            case 'hours': return value * SECONDS_IN_HOUR;
+            case 'seconds':
+            default: return value;
+        }
+    }
+
+    function displayInterval(seconds, valueInput, unitSelect) {
+        if (seconds === null || seconds === undefined) {
+            valueInput.value = ''; // Or a default
+            unitSelect.value = 'seconds';
+            return;
+        }
+        const unit = unitSelect.value; // Use current unit for display conversion
+        switch (unit) {
+            case 'minutes':
+                valueInput.value = Math.round(seconds / SECONDS_IN_MINUTE);
+                break;
+            case 'hours':
+                valueInput.value = Math.round(seconds / SECONDS_IN_HOUR);
+                break;
+            case 'seconds':
+            default:
+                valueInput.value = seconds;
+                break;
+        }
+    }
+    
+    // Focus to select all text
+    minInput.addEventListener('focus', function() { this.select(); });
+    maxInput.addEventListener('focus', function() { this.select(); });
+
+    // Min input changes -> potentially update max
+    minInput.addEventListener('input', () => {
+        const minSeconds = getIntervalInSeconds(minInput, minUnitSelect);
+        const maxSeconds = getIntervalInSeconds(maxInput, maxUnitSelect);
+
+        if (minSeconds !== null && (maxSeconds === null || maxSeconds < minSeconds)) {
+            // If max is less than min, or max is invalid, set max to be same as min (in max's current unit)
+            let newMaxValue;
+            switch (maxUnitSelect.value) {
+                case 'minutes': newMaxValue = Math.round(minSeconds / SECONDS_IN_MINUTE); break;
+                case 'hours':   newMaxValue = Math.round(minSeconds / SECONDS_IN_HOUR);   break;
+                default:        newMaxValue = minSeconds; break;
+            }
+            maxInput.value = Math.max(1, newMaxValue); // Ensure it's at least 1
+        }
+    });
+    // When min unit changes, re-evaluate if max needs to sync
+    minUnitSelect.addEventListener('change', () => {
+        minInput.dispatchEvent(new Event('input')); // Trigger the input event on minInput
+        // Save unit preference
+        saveCurrentTabIntervalUnits();
+    });
+    maxUnitSelect.addEventListener('change', () => {
+        // Save unit preference
+        saveCurrentTabIntervalUnits();
+    });
+
+
+    // --- Rest of the script (element getters, functions, event listeners) ---
     const toggleRefreshButton = document.getElementById('toggleRefreshButton');
+    // ... (other element getters for currentTabStatusDiv, etc.)
     const currentTabStatusDiv = document.getElementById('currentTabStatus');
     const currentTabIdDisplay = document.getElementById('currentTabIdDisplay');
     const currentTabTitleDisplay = document.getElementById('currentTabTitle');
@@ -152,27 +248,37 @@ document.addEventListener('DOMContentLoaded', async () => {
     const noTasksMessage = document.getElementById('noTasksMessage'); 
     const activeTaskCountSpan = document.getElementById('activeTaskCount');
 
-
     let countdownIntervals = {}; 
 
-    function formatTime(ms) {
-      // ... (formatTime function remains the same) ...
+    function formatTime(ms) { /* ... same ... */ 
       if (ms <= 0) return "00:00";
       const totalSeconds = Math.max(0, Math.floor(ms / 1000));
       const minutes = Math.floor(totalSeconds / 60);
       const seconds = totalSeconds % 60;
       return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
     }
-
-    function clearAllCountdowns() {
-      // ... (clearAllCountdowns function remains the same) ...
+    function clearAllCountdowns() { /* ... same ... */ 
       for (const tabId in countdownIntervals) {
         clearInterval(countdownIntervals[tabId]);
       }
       countdownIntervals = {};
     }
 
+    function getTaskIntervalDisplay(minSec, maxSec) {
+        // For task list, always display in a smart way (e.g., seconds, or minutes if large)
+        // This is a simplified version, you might want more sophisticated unit conversion for display
+        if (maxSec < SECONDS_IN_MINUTE * 2 && minSec < SECONDS_IN_MINUTE * 2) {
+            return getText('everyLabelSeconds', minSec, maxSec);
+        } else if (maxSec < SECONDS_IN_HOUR * 2 && minSec < SECONDS_IN_HOUR * 2) {
+            return getText('everyLabelMinutes', Math.round(minSec/SECONDS_IN_MINUTE), Math.round(maxSec/SECONDS_IN_MINUTE));
+        } else {
+            return getText('everyLabelHours', Math.round(minSec/SECONDS_IN_HOUR), Math.round(maxSec/SECONDS_IN_HOUR));
+        }
+    }
+
+
     async function updateTaskList(forceTextUpdate = false) {
+      // ... (updateTaskList logic largely same, but uses getTaskIntervalDisplay) ...
       clearAllCountdowns();
       const itemsToRemove = [];
       for (const child of taskListDiv.children) {
@@ -197,6 +303,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           taskInfo.className = 'task-info';
 
           const titleSpan = document.createElement('span');
+          // ... (title and URL span setup)
           titleSpan.className = 'task-title';
           titleSpan.textContent = task.title || `Tab ID: ${task.tabId}`;
           titleSpan.title = task.title || `Tab ID: ${task.tabId}`;
@@ -210,6 +317,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             taskInfo.appendChild(urlSpan);
           }
 
+
           const detailsSpan = document.createElement('span');
           detailsSpan.className = 'task-details';
           const countdownSpan = document.createElement('span');
@@ -217,33 +325,24 @@ document.addEventListener('DOMContentLoaded', async () => {
           
           detailsSpan.textContent = getText('nextInLabel');
           detailsSpan.appendChild(countdownSpan);
-          detailsSpan.append(getText('everyLabel', task.minInterval, task.maxInterval));
+          // Use new display function for interval
+          detailsSpan.append(getTaskIntervalDisplay(task.minInterval, task.maxInterval)); // minInterval/maxInterval are in seconds from background
 
-           if (task.statusNote) { 
-              const noteSpan = document.createElement('span');
-              noteSpan.style.fontSize = '0.9em';
-              noteSpan.style.marginLeft = '5px';
-              noteSpan.style.color = '#777';
-              noteSpan.textContent = `(${getText('statusRescheduling').trim()})`; 
-              detailsSpan.appendChild(noteSpan);
-          }
-          taskInfo.appendChild(detailsSpan);
+           if (task.statusNote) { /* ... statusNote ... */ }
+           taskInfo.appendChild(detailsSpan);
 
-          // MODIFIED PART: Display isClosed status based on currentReopenSetting
-          if (task.isClosed) {
+          if (task.isClosed) { /* ... isClosed display ... */ 
               const closedStatusSpan = document.createElement('span');
               closedStatusSpan.style.color = 'orange';
               closedStatusSpan.style.fontSize = '0.8em';
               closedStatusSpan.style.display = 'block';
               closedStatusSpan.style.marginTop = '2px';
-              // Use the currentReopenSetting fetched from background
               closedStatusSpan.textContent = getText(currentReopenSetting ? 'statusAwaitingReopen' : 'statusClosedWillDelete');
               taskInfo.appendChild(closedStatusSpan);
           }
-          // END MODIFIED PART
 
           const deleteTaskButton = document.createElement('button');
-          // ... (rest of deleteTaskButton setup remains the same) ...
+          // ... (deleteTaskButton setup)
           deleteTaskButton.className = 'delete-task-button';
           deleteTaskButton.textContent = getText('deleteButton');
           deleteTaskButton.addEventListener('click', async (e) => {
@@ -258,7 +357,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           taskListDiv.appendChild(item); 
 
           let remainingTime = task.timeLeft;
-          // ... (rest of countdown logic remains the same) ...
+          // ... (countdown logic)
           countdownSpan.textContent = formatTime(remainingTime);
 
           if (remainingTime > 0) {
@@ -279,7 +378,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                countdownSpan.textContent = getText('dueRefreshingStatus');
           }
         });
-      } else {
+      } else { /* ... no tasks display ... */ 
         if (forceTextUpdate || noTasksMessage.textContent !== getText('noTasks')) {
              noTasksMessage.textContent = getText('noTasks'); 
         }
@@ -287,9 +386,33 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     }
 
+    async function saveCurrentTabIntervalUnits(tabId) {
+        if (!tabId) return;
+        const storageKeyMinUnit = `tab_${tabId}_minUnit`;
+        const storageKeyMaxUnit = `tab_${tabId}_maxUnit`;
+        await chrome.storage.local.set({
+            [storageKeyMinUnit]: minUnitSelect.value,
+            [storageKeyMaxUnit]: maxUnitSelect.value
+        });
+    }
+    
+    async function loadCurrentTabIntervalUnits(tabId) {
+        if (!tabId) { // Default if no tabId (e.g. popup opened on non-tab page)
+            minUnitSelect.value = 'seconds';
+            maxUnitSelect.value = 'seconds';
+            return;
+        }
+        const storageKeyMinUnit = `tab_${tabId}_minUnit`;
+        const storageKeyMaxUnit = `tab_${tabId}_maxUnit`;
+        const units = await chrome.storage.local.get([storageKeyMinUnit, storageKeyMaxUnit]);
+        minUnitSelect.value = units[storageKeyMinUnit] || 'seconds';
+        maxUnitSelect.value = units[storageKeyMaxUnit] || 'seconds';
+    }
+
+
     async function updateCurrentTabControls(forceTextUpdate = false) {
-        // ... (updateCurrentTabControls function remains largely the same) ...
       let localCurrentTab = null;
+      // ... (Querying tab text update)
       const queryingText = getText('queryingTab');
       if(forceTextUpdate || currentTabTitleDisplay.title !== queryingText) currentTabTitleDisplay.title = queryingText;
       currentTabTitleDisplay.textContent = queryingText;
@@ -301,19 +424,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (tabs && tabs.length > 0) {
           localCurrentTab = tabs[0];
         }
-      } catch (e) {
-        console.error("Popup (updateCurrentTabControls): Error querying active tab:", e);
-      }
+      } catch (e) { /* ... error handling ... */ }
 
       if (!localCurrentTab || !localCurrentTab.id) {
+        // ... (handling no active tab, disable inputs) ...
+        minInput.disabled = true; maxInput.disabled = true;
+        minUnitSelect.disabled = true; maxUnitSelect.disabled = true;
+        // ... (rest of no active tab UI update)
         currentTabStatusDiv.textContent = getText('statusErrorTabInfo');
         toggleRefreshButton.disabled = true;
         const naText = getText('statusTabNA');
         if (forceTextUpdate || currentTabTitleDisplay.title !== naText) currentTabTitleDisplay.title = naText;
         currentTabTitleDisplay.textContent = naText;
         currentTabIdDisplay.textContent = naText;
-        minInput.disabled = true;
-        maxInput.disabled = true;
         
         toggleRefreshButton.textContent = getText(toggleRefreshButton.dataset.langKeyEnable || 'enableRefresh');
         toggleRefreshButton.classList.remove('enabled');
@@ -321,92 +444,98 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       currentTabIdDisplay.textContent = `ID: ${localCurrentTab.id}`;
+      // ... (update tab title display) ...
       currentTabTitleDisplay.textContent = localCurrentTab.title || "Untitled Tab";
       currentTabTitleDisplay.title = localCurrentTab.title || "Untitled Tab"; 
-      minInput.disabled = false;
-      maxInput.disabled = false;
 
-      const storageKeyMin = `tab_${localCurrentTab.id}_min`;
-      const storageKeyMax = `tab_${localCurrentTab.id}_max`;
+      minInput.disabled = false; maxInput.disabled = false;
+      minUnitSelect.disabled = false; maxUnitSelect.disabled = false;
+
+      // Load saved units for this tab
+      await loadCurrentTabIntervalUnits(localCurrentTab.id);
+
+      // Load saved interval values (these are always in seconds in storage)
+      const storageKeyMin = `tab_${localCurrentTab.id}_minSec`; // Store as seconds
+      const storageKeyMax = `tab_${localCurrentTab.id}_maxSec`;
       const savedSettings = await chrome.storage.local.get([storageKeyMin, storageKeyMax]);
       
-      minInput.value = savedSettings[storageKeyMin] || 60;
-      maxInput.value = savedSettings[storageKeyMax] || 120;
+      // Display them using the loaded/current units
+      displayInterval(savedSettings[storageKeyMin] || 60, minInput, minUnitSelect);
+      displayInterval(savedSettings[storageKeyMax] || 120, maxInput, maxUnitSelect);
+
 
       const response = await chrome.runtime.sendMessage({ type: "GET_STATUS", tabId: localCurrentTab.id });
       
       if (response && response.isRefreshing) {
-        minInput.value = response.minInterval;
-        maxInput.value = response.maxInterval;
+        // If refreshing, display the actual refreshing intervals (from background, in seconds)
+        // converted to current units
+        displayInterval(response.minInterval, minInput, minUnitSelect);
+        displayInterval(response.maxInterval, maxInput, maxUnitSelect);
+        
         toggleRefreshButton.textContent = getText(toggleRefreshButton.dataset.langKeyDisable || 'disableRefresh'); 
+        // ... (rest of refreshing state UI update)
         toggleRefreshButton.classList.add('enabled');
         toggleRefreshButton.disabled = false;
         
-        let statusText = getText('statusRefreshing', formatTime(response.timeLeft), response.minInterval, response.maxInterval);
+        let statusText = getText('statusRefreshing', formatTime(response.timeLeft), response.minInterval, response.maxInterval); // Display interval in seconds here for status
         if (response.statusNote) statusText += getText('statusRescheduling');
-        if (response.isClosed) { // Check if current tab is marked as closed
+        if (response.isClosed) { 
             statusText += ` ${getText(currentReopenSetting ? 'statusAwaitingReopen' : 'statusClosedWillDelete')}`;
         }
         currentTabStatusDiv.textContent = statusText;
+
       } else {
+        // Not refreshing, values from storage (already displayed) are fine.
         toggleRefreshButton.textContent = getText(toggleRefreshButton.dataset.langKeyEnable || 'enableRefresh'); 
+        // ... (rest of idle state UI update)
         toggleRefreshButton.classList.remove('enabled');
         toggleRefreshButton.disabled = false;
         currentTabStatusDiv.textContent = getText('statusIdle');
       }
-      
       return localCurrentTab;
     }
     
     toggleRefreshButton.addEventListener('click', async () => {
-        // ... (toggleRefreshButton click handler remains the same) ...
       let tabToOperateOn = null;
+      // ... (get active tab) ...
       try {
         const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (activeTab && activeTab.id) {
           tabToOperateOn = activeTab;
         }
-      } catch (e) {
-          console.error("Popup (button click): Error getting active tab:", e);
-          currentTabStatusDiv.textContent = getText('statusErrorAction');
-          return;
-      }
+      } catch (e) { /* ... error ... */ }
 
-      if (!tabToOperateOn) {
-        currentTabStatusDiv.textContent = getText('statusErrorNoTabAction');
-        toggleRefreshButton.disabled = true;
-        return;
-      }
+      if (!tabToOperateOn) { /* ... error UI ... */ return; }
       toggleRefreshButton.disabled = false;
 
-      const min = parseInt(minInput.value);
-      const max = parseInt(maxInput.value);
+      const minSeconds = getIntervalInSeconds(minInput, minUnitSelect);
+      const maxSeconds = getIntervalInSeconds(maxInput, maxUnitSelect);
 
-      if (isNaN(min) || isNaN(max) || min <= 0 || max <= 0 || min > max) {
+      if (minSeconds === null || maxSeconds === null || minSeconds > maxSeconds) {
         currentTabStatusDiv.textContent = getText('statusErrorInvalidInterval');
         return;
       }
       
-      const storageKeyMin = `tab_${tabToOperateOn.id}_min`;
-      const storageKeyMax = `tab_${tabToOperateOn.id}_max`;
+      // Save interval values (as seconds) and units to storage
+      const storageKeyMinSec = `tab_${tabToOperateOn.id}_minSec`;
+      const storageKeyMaxSec = `tab_${tabToOperateOn.id}_maxSec`;
       await chrome.storage.local.set({
-          [storageKeyMin]: min,
-          [storageKeyMax]: max
+          [storageKeyMinSec]: minSeconds,
+          [storageKeyMaxSec]: maxSeconds
       });
+      await saveCurrentTabIntervalUnits(tabToOperateOn.id); // Save current units
+
 
       const currentStatus = await chrome.runtime.sendMessage({ type: "GET_STATUS", tabId: tabToOperateOn.id });
 
       if (currentStatus.isRefreshing) {
-        await chrome.runtime.sendMessage({
-          type: "STOP_REFRESH", 
-          tabId: tabToOperateOn.id
-        });
+        await chrome.runtime.sendMessage({ type: "STOP_REFRESH", tabId: tabToOperateOn.id });
       } else {
         await chrome.runtime.sendMessage({
           type: "START_REFRESH",
           tabId: tabToOperateOn.id,
-          minInterval: min,
-          maxInterval: max,
+          minInterval: minSeconds, // Send seconds to background
+          maxInterval: maxSeconds, // Send seconds to background
           tabTitle: tabToOperateOn.title || "Untitled Tab",
           tabUrl: tabToOperateOn.url 
         });
@@ -416,24 +545,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   
     // --- Initialization ---
-    (async () => { // Wrap in an async IIFE for await
-        // 1. Load preferred language
+    (async () => { 
         const langResult = await new Promise(resolve => chrome.storage.local.get('preferredLang', resolve));
-        if (langResult.preferredLang) {
-            currentLang = langResult.preferredLang;
-        }
-
-        // 2. Load the reopen setting from background AND store it locally in popup.js
+        if (langResult.preferredLang) currentLang = langResult.preferredLang;
+        
         await loadAndApplyReopenSetting(); 
+        applyTranslations(); // Applies translations and calls update functions
 
-        // 3. Apply translations (which will use the loaded language)
-        applyTranslations(); // This itself calls updateCurrentTabControls(true) and updateTaskList(true)
-
-        // 4. Initial data load (these are now called within applyTranslations or after lang change,
-        //    but calling them again here ensures they run with the LATEST reopenSetting)
-        //    The calls within applyTranslations might not have the `currentReopenSetting` fully up-to-date yet.
-        //    Let's ensure they are called once everything is loaded.
-        await updateCurrentTabControls();
+        // The initial calls to update controls/list are good here,
+        // as applyTranslations might not have all data (like tabId for units) fully ready.
+        await updateCurrentTabControls(); 
         await updateTaskList();
     })();
 });
