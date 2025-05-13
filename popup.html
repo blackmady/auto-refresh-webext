@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Tab Auto Refresher</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif; width: 380px; padding: 10px; font-size: 14px; color: #333; position: relative; } /* Added position: relative */
+    h3, h4 { margin-top: 12px; margin-bottom: 8px; color: #111; }
+    label { display: inline-block; margin-top: 5px; margin-right: 3px; font-size: 0.9em; }
+    input[type="number"] { width: 55px; margin-left: 2px; padding: 4px; border: 1px solid #ccc; border-radius: 3px; font-size: 0.9em;}
+    button { margin-top: 10px; padding: 7px 12px; cursor: pointer; border: none; border-radius: 4px; background-color: #007bff; color: white; font-size: 0.9em; }
+    button:hover { background-color: #0056b3; }
+    button:disabled { background-color: #ccc; cursor: not-allowed; }
+    hr { margin: 18px 0; border: 0; border-top: 1px solid #eee; }
+    .status { margin-top: 8px; font-style: italic; color: #555; font-size: 0.9em; }
+    #taskList .task-item {
+      padding: 10px;
+      border-bottom: 1px solid #f0f0f0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      line-height: 1.4;
+    }
+    #taskList .task-item:last-child { border-bottom: none; }
+    .task-info { flex-grow: 1; margin-right: 10px; }
+    .task-title { font-weight: 600; display: block; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px;}
+    .task-details { font-size: 0.85em; color: #444; }
+    .task-countdown { font-weight: bold; }
+    .delete-task-button { /* Renamed from stop-task-button */
+        padding: 5px 9px; 
+        background-color: #dc3545; 
+        font-size: 0.85em; 
+        min-width: 60px; /* Ensure enough space for "Delete" / "删除" */
+        text-align: center;
+    } 
+    .delete-task-button:hover { background-color: #c82333; }
+    #currentTabSection { padding-bottom: 10px; border: 1px solid #e0e0e0; padding: 10px; border-radius: 5px; background-color: #f9f9f9;}
+    #currentTabSection div { margin-bottom: 6px;}
+    #currentTabTitle { display: inline-block; max-width: 280px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle;}
+    #noTasksMessage { padding: 10px; text-align: center; color: #777; }
+    #toggleRefreshButton.enabled { background-color: #28a745; }
+    #toggleRefreshButton.enabled:hover { background-color: #218838; }
+    
+    #languageToggle {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        padding: 5px 8px;
+        font-size: 0.8em;
+        background-color: #6c757d;
+        color: white;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+    }
+    #languageToggle:hover { background-color: #5a6268; }
+  </style>
+</head>
+<body>
+  <button id="languageToggle">EN/简</button> 
+  
+  <h3 data-lang-key="title">Tab Auto Refresher</h3>
+
+  <div id="currentTabSection">
+    <h4 data-lang-key="currentTabHeader">Current Tab</h4>
+    <div>
+      <span title="Full tab title" id="currentTabTitle" data-lang-title-key="queryingTab">Querying tab...</span>
+      (<span id="currentTabIdDisplay"></span>)
+    </div>
+    <div>
+      <label for="minInterval" data-lang-key="minIntervalLabel">Min (s):</label>
+      <input type="number" id="minInterval" value="60" min="1">
+      <label for="maxInterval" data-lang-key="maxIntervalLabel">Max (s):</label>
+      <input type="number" id="maxInterval" value="120" min="1">
+    </div>
+    <button id="toggleRefreshButton" data-lang-key-enable="enableRefresh" data-lang-key-disable="disableRefresh">Enable Refresh</button>
+    <div id="currentTabStatus" class="status" data-lang-key-idle="statusIdle">Status: Idle</div>
+  </div>
+
+  <hr>
+
+  <h4 data-lang-key="activeTasksHeader">Active Refresh Tasks (<span id="activeTaskCount">0</span>)</h4>
+  <div id="taskList">
+    <p id="noTasksMessage" data-lang-key="noTasks">No active refresh tasks.</p>
+    <!-- Task items will be dynamically added here -->
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
