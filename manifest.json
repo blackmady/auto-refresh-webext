@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Tab Auto Refresher",
-  "version": "1.5", // Increment version
-  "description": "Refreshes specific tabs at random intervals. Option to reopen closed tabs.",
+  "version": "1.6", // Increment version
+  "description": "Refreshes specific tabs at random intervals. Option to reopen closed tabs at refresh time.",
   "permissions": [
     "tabs",
     "alarms",

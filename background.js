@@ -1,117 +1,153 @@
-// { tabId: { minInterval, maxInterval, alarmName, tabTitle, url } }
+// { tabId: { minInterval, maxInterval, alarmName, tabTitle, url, isClosed } }
 const activeRefreshers = {};
-const STORAGE_KEY_REOPEN_TABS = 'reopenClosedTabsSetting'; // true to reopen, false to delete
+const STORAGE_KEY_REOPEN_TABS = 'reopenClosedTabsSetting'; 
 
-// --- Initialization: Load reopen setting from storage ---
-let reopenClosedTabs = false; // Default
+let reopenClosedTabs = false; 
 chrome.storage.local.get(STORAGE_KEY_REOPEN_TABS, (result) => {
     if (typeof result[STORAGE_KEY_REOPEN_TABS] === 'boolean') {
         reopenClosedTabs = result[STORAGE_KEY_REOPEN_TABS];
-        console.log(`BG: Initial reopenClosedTabs setting loaded: ${reopenClosedTabs}`);
     } else {
-        // If not set, initialize with default (false)
         chrome.storage.local.set({ [STORAGE_KEY_REOPEN_TABS]: false });
-        console.log(`BG: reopenClosedTabs setting not found, initialized to: ${reopenClosedTabs}`);
     }
+    console.log(`BG: Initial reopenClosedTabs setting: ${reopenClosedTabs}`);
 });
 
-
-// --- Alarm Listener ---
+// --- Alarm Listener (MAJOR CHANGES HERE) ---
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   const prefix = "refresh-tab-";
-  if (alarm.name.startsWith(prefix)) {
-    const tabId = parseInt(alarm.name.substring(prefix.length));
+  if (!alarm.name.startsWith(prefix)) return;
 
-    if (activeRefreshers[tabId]) {
+  const tabId = parseInt(alarm.name.substring(prefix.length));
+  const task = activeRefreshers[tabId];
+
+  if (!task) {
+    console.log(`BG: Orphan alarm ${alarm.name} fired (no activeRefresher entry). Clearing.`);
+    chrome.alarms.clear(alarm.name);
+    return;
+  }
+
+  console.log(`BG: Alarm triggered for tab ${tabId} ('${task.tabTitle}'). IsClosed: ${task.isClosed}, ReopenSetting: ${reopenClosedTabs}`);
+
+  if (task.isClosed) { // Tab was marked as closed by onRemoved
+    if (reopenClosedTabs && task.url && task.url !== 'chrome://newtab/') {
+      console.log(`BG: Tab ${tabId} was closed. Reopening URL: ${task.url}`);
       try {
-        const tab = await chrome.tabs.get(tabId);
-        if (tab && !tab.discarded) {
-          console.log(`BG: Refreshing tab ${tabId} ('${activeRefreshers[tabId].tabTitle || tab.title}') URL: ${activeRefreshers[tabId].url}`);
-          // Ensure URL in activeRefreshers is up-to-date before reload, in case it changed
-          if (tab.url && activeRefreshers[tabId].url !== tab.url) {
-            activeRefreshers[tabId].url = tab.url;
-            console.log(`BG: Updated URL for tab ${tabId} to ${tab.url} before refresh.`);
-          }
-          await chrome.tabs.reload(tabId);
-          scheduleNextRefresh(tabId); 
-        } else { 
-          console.log(`BG: Tab ${tabId} not found or discarded when alarm fired, attempting configured action.`);
-          // Tab is gone, onRemoved listener should handle it based on reopenClosedTabs setting
-          // However, if onRemoved didn't catch it (e.g., browser crash then restore without tab), clear here.
-          if (!reopenClosedTabs) { // If not reopening, definitely clear. Reopen case handled by onRemoved.
-            clearRefresh(tabId);
-          } else {
-            // If configured to reopen, onRemoved should have ideally handled it.
-            // If we reach here and tab is gone, it implies onRemoved might not have run or failed.
-            // For safety, if it's set to reopen and the tab is gone, we might try to reopen here too,
-            // but this could lead to duplicate reopen attempts if onRemoved also succeeds.
-            // The current onRemoved logic is better suited for this.
-            // So, if alarm fires and tab is gone, and we are set to reopen, we rely on onRemoved.
-            // If onRemoved failed, the task might become orphaned. For now, we clear it if not set to reopen.
-            console.log(`BG: Alarm for closed tab ${tabId}, reopen is ${reopenClosedTabs}. Relying on onRemoved or task becomes orphaned.`);
-            // To be absolutely safe and prevent orphaned alarms if onRemoved fails AND reopen is true:
-            // we could also try to clear the alarm if the tab is truly gone and not coming back.
-            // However, the main logic for reopening is in onRemoved.
-          }
+        // IMPORTANT: Clear the old task and alarm for the original tabId first
+        const oldTaskDetails = { ...task }; // Keep details for new task
+        clearRefresh(tabId); // This deletes activeRefreshers[tabId] and clears alarm by name
+
+        const newTab = await chrome.tabs.create({ url: oldTaskDetails.url, active: false });
+        console.log(`BG: Reopened tab ${tabId} as new tab ${newTab.id}.`);
+
+        if (newTab.id) {
+          // Start a new refresh task for the new tab
+          const newAlarmName = `refresh-tab-${newTab.id}`;
+          activeRefreshers[newTab.id] = {
+            minInterval: oldTaskDetails.minInterval,
+            maxInterval: oldTaskDetails.maxInterval,
+            alarmName: newAlarmName,
+            tabTitle: oldTaskDetails.tabTitle, // Will be updated by onUpdated
+            url: oldTaskDetails.url,
+            isClosed: false // New tab is open
+          };
+          scheduleNextRefresh(newTab.id);
+          console.log(`BG: New refresh task started for reopened tab ${newTab.id}.`);
         }
-      } catch (error) { 
-        console.warn(`BG: Error during alarm for tab ${tabId} (likely closed). Message: ${error.message}`);
-        // Similar to above, onRemoved should handle closure.
-        if (!reopenClosedTabs) {
+      } catch (error) {
+        console.error(`BG: Error reopening tab for URL ${task.url}:`, error);
+        // If reopening fails, the old task (for original tabId) should already be cleared by clearRefresh above.
+      }
+    } else {
+      // Not reopening (either setting is off or URL is invalid)
+      console.log(`BG: Tab ${tabId} was closed and not configured to reopen (or URL invalid). Deleting task.`);
+      clearRefresh(tabId);
+    }
+  } else { // Tab was NOT marked as closed (or isClosed is undefined/false)
+    try {
+      const currentTab = await chrome.tabs.get(tabId);
+      if (currentTab && !currentTab.discarded) { // Tab still exists and is active
+        console.log(`BG: Refreshing currently open tab ${tabId} ('${task.tabTitle}') URL: ${task.url}`);
+        if (currentTab.url && task.url !== currentTab.url) {
+            task.url = currentTab.url; // Update URL if it changed
+        }
+        if (currentTab.title && task.tabTitle !== currentTab.title) {
+            task.tabTitle = currentTab.title; // Update title
+        }
+        await chrome.tabs.reload(tabId);
+        scheduleNextRefresh(tabId);
+      } else {
+        // Tab.get succeeded but tab is discarded or somehow invalid - treat as closed
+        console.log(`BG: Tab ${tabId} found but discarded or invalid. Treating as closed for reopen logic.`);
+        // Simulate the "isClosed" path by calling this function recursively with a modified task might be complex.
+        // Simpler: directly apply the reopen/delete logic here.
+        // This code block is now similar to the 'if (task.isClosed)' block.
+        if (reopenClosedTabs && task.url && task.url !== 'chrome://newtab/') {
+            console.log(`BG: Tab ${tabId} was (effectively) closed. Reopening URL: ${task.url}`);
+            const oldTaskDetails = { ...task };
+            clearRefresh(tabId); 
+            const newTab = await chrome.tabs.create({ url: oldTaskDetails.url, active: false });
+            if (newTab.id) {
+                const newAlarmName = `refresh-tab-${newTab.id}`;
+                activeRefreshers[newTab.id] = { ...oldTaskDetails, tabId: newTab.id, alarmName: newAlarmName, isClosed: false };
+                scheduleNextRefresh(newTab.id);
+            }
+        } else {
+            console.log(`BG: Tab ${tabId} was (effectively) closed and not configured to reopen. Deleting task.`);
             clearRefresh(tabId);
         }
       }
-    } else {
-        console.log(`BG: Orphan alarm ${alarm.name} fired (no activeRefresher entry). Clearing.`);
-        chrome.alarms.clear(alarm.name);
+    } catch (error) {
+      // Tab.get failed - tab is definitely gone.
+      console.warn(`BG: Tab ${tabId} not found when alarm triggered (error: ${error.message}). Applying reopen/delete logic.`);
+      // This code block is now similar to the 'if (task.isClosed)' block.
+      if (reopenClosedTabs && task.url && task.url !== 'chrome://newtab/') {
+        console.log(`BG: Tab ${tabId} was (definitively) closed. Reopening URL: ${task.url}`);
+        const oldTaskDetails = { ...task };
+        clearRefresh(tabId); 
+        try {
+            const newTab = await chrome.tabs.create({ url: oldTaskDetails.url, active: false });
+            if (newTab.id) {
+                const newAlarmName = `refresh-tab-${newTab.id}`;
+                // Create a fresh entry for the new tab
+                activeRefreshers[newTab.id] = {
+                    minInterval: oldTaskDetails.minInterval,
+                    maxInterval: oldTaskDetails.maxInterval,
+                    alarmName: newAlarmName,
+                    tabTitle: oldTaskDetails.tabTitle,
+                    url: oldTaskDetails.url,
+                    isClosed: false
+                };
+                scheduleNextRefresh(newTab.id);
+                console.log(`BG: New refresh task started for definitively closed then reopened tab ${newTab.id}.`);
+            }
+        } catch (reopenError) {
+            console.error(`BG: Error reopening definitively closed tab for URL ${task.url}:`, reopenError);
+        }
+      } else {
+        console.log(`BG: Tab ${tabId} was (definitively) closed and not configured to reopen. Deleting task.`);
+        clearRefresh(tabId);
+      }
     }
   }
 });
 
 // --- Tab Event Listeners ---
-chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
+chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
   if (activeRefreshers[tabId]) {
-    const task = { ...activeRefreshers[tabId] }; // Copy task details
-    
-    console.log(`BG: Monitored tab ${tabId} ('${task.tabTitle}') URL: ${task.url} was removed.`);
-    
-    // Clear the old task immediately, regardless of reopen setting, to prevent orphaned alarms/entries
-    // If reopening, a new task for the new tab will be created.
-    clearRefresh(tabId); // Crucial: remove the old tabId's task
-
-    if (reopenClosedTabs && task.url && task.url !== 'chrome://newtab/') {
-      console.log(`BG: Configured to reopen. Attempting to reopen URL: ${task.url}`);
-      try {
-        const newTab = await chrome.tabs.create({ url: task.url, active: false }); // Open in background
-        console.log(`BG: Reopened tab ${tabId} as new tab ${newTab.id} with URL ${task.url}.`);
-        
-        // Start a new refresh task for the new tab with the same parameters
-        // Note: The new tab will have a new ID.
-        if (newTab.id) {
-          console.log(`BG: Starting new refresh task for reopened tab ${newTab.id} with old parameters.`);
-          // Send a message to self to start refresh for the new tabId, effectively.
-          // Or directly call the logic. Directly calling is cleaner here.
-          const newAlarmName = `refresh-tab-${newTab.id}`;
-          activeRefreshers[newTab.id] = { // Create new entry for the new tab
-            minInterval: task.minInterval, // use original min/max in ms
-            maxInterval: task.maxInterval,
-            alarmName: newAlarmName,
-            tabTitle: task.tabTitle, // Can be updated later by onUpdated
-            url: task.url
-          };
-          scheduleNextRefresh(newTab.id);
-        }
-      } catch (error) {
-        console.error(`BG: Error reopening tab for URL ${task.url}:`, error);
-      }
-    } else {
-      console.log(`BG: Tab ${tabId} closed. Reopen setting is OFF or URL is invalid. Task deleted.`);
-    }
+    console.log(`BG: Monitored tab ${tabId} ('${activeRefreshers[tabId].tabTitle}') was removed. Marking as closed.`);
+    activeRefreshers[tabId].isClosed = true;
+    // DO NOT clear the alarm or activeRefresher entry here. Let the alarm handler decide.
   }
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (activeRefreshers[tabId]) {
+    // If a tab that was marked 'isClosed' gets an update (e.g., user navigates to its history, reopens it manually),
+    // we should mark it as no longer closed.
+    if (activeRefreshers[tabId].isClosed && (changeInfo.status === 'complete' || changeInfo.url)) {
+        console.log(`BG: Tab ${tabId} was marked closed but received an update. Marking as open again.`);
+        activeRefreshers[tabId].isClosed = false;
+    }
     if (changeInfo.title) {
       activeRefreshers[tabId].tabTitle = changeInfo.title;
     }
@@ -126,7 +162,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 // --- Message Listener ---
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === "START_REFRESH") {
-    const { tabId, minInterval, maxInterval, tabTitle, tabUrl } = request; // Expect tabUrl
+    const { tabId, minInterval, maxInterval, tabTitle, tabUrl } = request;
     const alarmName = `refresh-tab-${tabId}`;
 
     if (activeRefreshers[tabId] && activeRefreshers[tabId].alarmName) {
@@ -138,35 +174,40 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       maxInterval: maxInterval * 1000,
       alarmName: alarmName,
       tabTitle: tabTitle || "Tab " + tabId,
-      url: tabUrl || "chrome://newtab/" // Store the URL
+      url: tabUrl || "chrome://newtab/",
+      isClosed: false // Initially, the tab is open
     };
     scheduleNextRefresh(tabId);
-    console.log(`BG: START_REFRESH for tab ${tabId}, URL: ${tabUrl}`);
+    console.log(`BG: START_REFRESH for tab ${tabId}, URL: ${tabUrl}, isClosed: false`);
     sendResponse({ success: true, message: `Refresh started for tab ${tabId}` });
     return true; 
 
   } else if (request.type === "STOP_REFRESH") { 
     const { tabId } = request;
     console.log(`BG: STOP_REFRESH for tab ${tabId}`);
-    clearRefresh(tabId);
+    clearRefresh(tabId); // This will delete from activeRefreshers and clear alarm
     sendResponse({ success: true, message: `Refresh stopped for tab ${tabId}` });
     return true;
 
   } else if (request.type === "GET_STATUS") { 
+    // ... (no change from previous version of GET_STATUS is strictly needed for this logic change,
+    // but ensure it sends 'url' and potentially 'isClosed' if popup needs it)
     const { tabId } = request;
     if (activeRefreshers[tabId] && activeRefreshers[tabId].alarmName) {
       chrome.alarms.get(activeRefreshers[tabId].alarmName, (alarm) => {
+        const task = activeRefreshers[tabId];
         const responsePayload = {
             isRefreshing: true,
-            minInterval: activeRefreshers[tabId].minInterval / 1000,
-            maxInterval: activeRefreshers[tabId].maxInterval / 1000,
-            tabTitle: activeRefreshers[tabId].tabTitle,
-            url: activeRefreshers[tabId].url // Send URL
+            minInterval: task.minInterval / 1000,
+            maxInterval: task.maxInterval / 1000,
+            tabTitle: task.tabTitle,
+            url: task.url,
+            isClosed: !!task.isClosed // Send isClosed status
         };
         if (alarm) {
             responsePayload.timeLeft = alarm.scheduledTime - Date.now();
         } else {
-          console.warn(`BG: GET_STATUS: Alarm ${activeRefreshers[tabId].alarmName} for tab ${tabId} not found. Assuming due/rescheduling.`);
+          console.warn(`BG: GET_STATUS: Alarm ${task.alarmName} for tab ${tabId} not found. Assuming due/rescheduling.`);
           responsePayload.timeLeft = 0; 
           responsePayload.statusNote = "Rescheduling...";
         }
@@ -179,8 +220,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return false; 
 
   } else if (request.type === "GET_ALL_REFRESHERS") {
+    // ... (no change from previous GET_ALL_REFRESHERS is strictly needed,
+    // but ensure it sends 'url' and potentially 'isClosed' if popup needs it)
     (async () => {
-      const tasks = [];
+      const tasksToPopup = [];
       const currentRefresherTabIds = Object.keys(activeRefreshers).map(id => parseInt(id));
 
       for (const tabId of currentRefresherTabIds) {
@@ -194,47 +237,30 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             title: refresher.tabTitle,
             minInterval: refresher.minInterval / 1000,
             maxInterval: refresher.maxInterval / 1000,
-            url: refresher.url // Send URL
+            url: refresher.url,
+            isClosed: !!refresher.isClosed // Send isClosed status
         };
 
-        try {
-          const tab = await chrome.tabs.get(tabId); // Check if tab still exists
-          if (activeRefreshers[tabId]) { // Check again, could be cleared by another async op
-             activeRefreshers[tabId].tabTitle = tab.title || "Untitled Tab";
-             activeRefreshers[tabId].url = tab.url || activeRefreshers[tabId].url; // Update URL if changed
-             taskData.title = activeRefreshers[tabId].tabTitle;
-             taskData.url = activeRefreshers[tabId].url;
-          } else {
-            continue; 
-          }
-          
-          const alarm = await new Promise(resolve => chrome.alarms.get(refresher.alarmName, resolve));
+        // No need to call chrome.tabs.get here just for the popup list
+        // The isClosed flag should be the source of truth for "closed" status display
+        const alarm = await new Promise(resolve => chrome.alarms.get(refresher.alarmName, resolve));
 
-          if (alarm) {
-            taskData.timeLeft = alarm.scheduledTime - Date.now();
+        if (alarm) {
+          taskData.timeLeft = alarm.scheduledTime - Date.now();
+        } else {
+          // If alarm is gone but task exists, it's likely due or just fired.
+          // If isClosed is true, it's waiting for the (now non-existent) alarm to reopen.
+          // If isClosed is false, it's an odd state, maybe just fired.
+          taskData.timeLeft = 0; // Or some indicator it's due
+          if (refresher.isClosed) {
+            taskData.statusNote = "Awaiting reopen..."; // Or similar
           } else {
-            console.warn(`BG: GET_ALL_REFRESHERS: No alarm for tab ${tabId} ('${refresher.alarmName}'). Assuming due/rescheduling.`);
-            taskData.timeLeft = 0;
             taskData.statusNote = "Rescheduling...";
           }
-          tasks.push(taskData);
-        } catch (error) {
-          // Tab likely closed. The onRemoved listener should handle this based on settings.
-          // If the task is still in activeRefreshers here, it means onRemoved might not have fully processed yet,
-          // or it's configured to reopen and the new tab's task hasn't replaced it yet.
-          // For GET_ALL_REFRESHERS, we should reflect the *current* state. If the tab is gone, it's gone.
-          // The crucial part is that `clearRefresh(tabId)` is called by `onRemoved`.
-          console.log(`BG: Tab ${tabId} not accessible in GET_ALL_REFRESHERS (likely closed). Its fate depends on onRemoved logic.`);
-          // Do not call clearRefresh here again, as onRemoved is the primary handler for this.
-          // Instead, we can filter it out from the list sent to popup if it's truly gone
-          // and not just in a transient state of being reopened.
-          // For simplicity now, if get fails, we assume it will be handled.
-          // If we want to be super accurate, we'd need to ensure onRemoved has finished.
-          // A safer approach: if get() fails, don't include it in the list for the popup for now.
-          // This task will be cleaned up by onRemoved or subsequent checks.
         }
+        tasksToPopup.push(taskData);
       }
-      sendResponse({ tasks });
+      sendResponse({ tasks: tasksToPopup });
     })();
     return true; 
   } else if (request.type === "UPDATE_REOPEN_SETTING") {
@@ -247,11 +273,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     } else {
         sendResponse({ success: false, message: "Invalid setting value."});
     }
-    return true; // Async due to storage.set
+    return true; 
   } else if (request.type === "GET_REOPEN_SETTING") {
     sendResponse({ reopenSetting: reopenClosedTabs });
-    // This is sync, but good practice to return true if any path could be async or if unsure.
-    // In this specific case, it could be return false;
     return false;
   }
   return false; 
@@ -259,8 +283,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 // --- Helper Functions ---
 function scheduleNextRefresh(tabId) {
-  if (!activeRefreshers[tabId]) {
-    console.warn(`BG: Attempted to schedule refresh for non-existent activeRefresher: ${tabId}`);
+  if (!activeRefreshers[tabId] || activeRefreshers[tabId].isClosed) { // Don't schedule if marked closed
+    if(activeRefreshers[tabId] && activeRefreshers[tabId].isClosed) {
+        console.log(`BG: Tab ${tabId} is marked closed. Not scheduling next refresh directly. Alarm will handle.`);
+    } else {
+        console.warn(`BG: Attempted to schedule refresh for non-existent or invalid activeRefresher: ${tabId}`);
+    }
     return;
   }
 
@@ -268,20 +296,24 @@ function scheduleNextRefresh(tabId) {
   const randomDelayMs = Math.random() * (maxInterval - minInterval) + minInterval;
   const nextScheduledTime = Date.now() + randomDelayMs;
 
-  chrome.alarms.clear(alarmName, (wasCleared) => {
+  chrome.alarms.clear(alarmName, (wasCleared) => { // Clear old one if exists
     chrome.alarms.create(alarmName, { when: nextScheduledTime });
-    console.log(`BG: Tab ${tabId} ('${tabTitle || 'Untitled'}', URL: ${url}) next refresh scheduled in ${Math.round(randomDelayMs / 1000)}s (Alarm: ${alarmName})`);
+    console.log(`BG: Tab ${tabId} ('${tabTitle}', URL: ${url}) next refresh scheduled in ${Math.round(randomDelayMs / 1000)}s (Alarm: ${alarmName})`);
   });
 }
 
 function clearRefresh(tabId) {
-  if (activeRefreshers[tabId] && activeRefreshers[tabId].alarmName) {
-    const alarmName = activeRefreshers[tabId].alarmName;
-    chrome.alarms.clear(alarmName, (wasCleared) => {});
-  }
   if (activeRefreshers[tabId]) {
+    const alarmName = activeRefreshers[tabId].alarmName;
+    if (alarmName) {
+      chrome.alarms.clear(alarmName, (wasCleared) => {
+        // console.log(`BG: Alarm ${alarmName} for tab ${tabId} clear attempt: ${wasCleared}`);
+      });
+    }
     const deletedUrl = activeRefreshers[tabId].url;
     delete activeRefreshers[tabId];
     console.log(`BG: Removed tab ${tabId} (URL: ${deletedUrl}) from active refreshers.`);
+  } else {
+    // console.log(`BG: clearRefresh called for tab ${tabId}, but no activeRefresher entry found.`);
   }
 }
